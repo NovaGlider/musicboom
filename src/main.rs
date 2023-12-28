@@ -34,16 +34,49 @@ fn float_to_bar(x: f64, n: usize) -> String {
 
 #[derive(Parser)]
 struct Opts {
+    #[arg(long, short, help = "show debug output")]
+    debug: bool,
+    #[arg(
+        long,
+        short,
+        help = "frequency in Hz for lowp ass",
+        default_value = "200.0"
+    )]
+    low: f32,
+    #[arg(
+        long,
+        short = 'f',
+        help = "frequency in Hz for high pass",
+        default_value = "1000.0"
+    )]
+    high: f32,
+    #[arg(
+        long,
+        short,
+        help = "linear amplification for vibration",
+        default_value = "1.1"
+    )]
+    amp: f64,
+    #[arg(
+        long,
+        short,
+        help = "URI to Intiface",
+        default_value = "ws://localhost:12345/ws"
+    )]
     uri: String,
+    #[arg(
+        help = "connect to all Jack ports with this in their name",
+        default_value = "output"
+    )]
     filter: String,
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    let opts = Opts::parse();
+    let args = Opts::parse();
 
     let bp = ButtplugClient::new("MusicBoom");
-    let connector = new_json_ws_client_connector(&opts.uri);
+    let connector = new_json_ws_client_connector(&args.uri);
     bp.connect(connector).await?;
     bp.start_scanning().await?;
     bp.stop_scanning().await?;
@@ -54,7 +87,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let port = client.register_port("MusicBoom", AudioIn::default())?;
 
     let target_ports = client.ports(
-        Some(&format!(".*{}.*", opts.filter)),
+        Some(&format!(".*{}.*", args.filter)),
         None,
         PortFlags::IS_OUTPUT,
     );
@@ -83,7 +116,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 Coefficients::<f32>::from_params(
                     biquad::Type::LowPass,
                     (sample_rate as u32).hz(),
-                    200.hz(),
+                    args.low.hz(),
                     Q_BUTTERWORTH_F32,
                 )
                 .unwrap(),
@@ -123,7 +156,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .collect();
             for (i, x) in values.iter_mut().enumerate() {
                 *x /= max_value;
-                *x *= 1.1;
+                *x *= args.amp;
                 if *x > 1. {
                     *x = 1.;
                 }
@@ -134,11 +167,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
             }
             max_value *= 0.999;
 
-            // print!("{max_value:.4?} {total_max_value:.4?}");
-            // for &x in &values {
-            //     print!(" {}", float_to_bar(x, 20));
-            // }
-            // println!();
+            if args.debug {
+                print!("{max_value:.4?} {total_max_value:.4?}");
+                for &x in &values {
+                    print!(" {}", float_to_bar(x, 20));
+                }
+                println!();
+            }
             bp_device
                 .vibrate(&ScalarValueCommand::ScalarValueVec(values))
                 .await
